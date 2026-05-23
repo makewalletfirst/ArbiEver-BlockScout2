@@ -6,7 +6,7 @@ ArbiEver L2 (Chain ID `580511`) 전용 [Blockscout](https://github.com/blockscou
 
 ## 접속
 
-- **외부**: https://arbiever2.ever-chain.xyz
+- **외부**: https://arbiever.ever-chain.xyz
 - 로컬: http://localhost:4005
 
 ## 빠른 시작
@@ -53,7 +53,7 @@ curl http://localhost:4005/api/v2/stats
 ```
 NEXT_PUBLIC_NETWORK_NAME=ArbiEver
 NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL=ETE
-NEXT_PUBLIC_NETWORK_LOGO=https://arbiever2.ever-chain.xyz/static/arbiicon.png
+NEXT_PUBLIC_NETWORK_LOGO=https://arbiever.ever-chain.xyz/static/arbiicon.png
 NEXT_PUBLIC_IS_TESTNET=false
 NEXT_PUBLIC_COLOR_THEME_DEFAULT=light
 ```
@@ -68,7 +68,7 @@ ETHEREUM_JSONRPC_HTTP_URL=http://host.docker.internal:8449/
 
 ## 도메인 + 인프라
 
-- Cloudflare DNS: `arbiever2.ever-chain.xyz` → OCI VPN 게이트웨이
+- Cloudflare DNS: `arbiever.ever-chain.xyz` → OCI VPN 게이트웨이
 - OCI stunnel: `accept=4005`, `connect=10.8.0.14:4005`
 - 본 서버 (10.8.0.14): `proxy` 컨테이너 :4005 → backend(4000) + frontend(3000)
 
@@ -91,4 +91,4 @@ docker build -f Dockerfile.proxy -t arbiever-blockscout-proxy:local .
 ## 관련
 
 - ArbiEver L2 인프라: https://github.com/makewalletfirst/ArbiEver
-- 가벼운 Alethio Lite 익스플로러: https://github.com/makewalletfirst/AribiEver-Explorer
+- 가벼운 Alethio Lite 익스플로러: https://github.com/makewalletfirst/ArbiEver-Explorer
