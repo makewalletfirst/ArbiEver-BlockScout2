@@ -1,0 +1,93 @@
+services:
+  redis-db:
+    image: redis:alpine
+    container_name: arbiever-bs-redis
+    restart: unless-stopped
+    command: redis-server
+    volumes:
+      - redis-data:/data
+
+  db-init:
+    image: postgres:17
+    container_name: arbiever-bs-db-init
+    volumes:
+      - blockscout-db-data:/var/lib/postgresql/data
+    entrypoint:
+      - sh
+      - -c
+      - |
+        chown -R 2000:2000 /var/lib/postgresql/data
+
+  db:
+    image: postgres:17
+    container_name: arbiever-bs-db
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    user: 2000:2000
+    shm_size: 256m
+    environment:
+      POSTGRES_DB: blockscout
+      POSTGRES_USER: blockscout
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - blockscout-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: blockscout/blockscout:6.10.1
+    container_name: arbiever-bs-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-db:
+        condition: service_started
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    command:
+      - sh
+      - -c
+      - |
+        bin/blockscout eval "Elixir.Explorer.ReleaseTasks.create_and_migrate()"
+        bin/blockscout start
+    env_file:
+      - ./backend.env
+    environment:
+      ACCOUNT_REDIS_URL: redis://redis-db:6379
+      DATABASE_URL: postgresql://blockscout:${POSTGRES_PASSWORD}@db:5432/blockscout
+      ECTO_USE_SSL: 'false'
+      MIX_ENV: prod
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+
+  frontend:
+    image: ghcr.io/blockscout/frontend:v1.36.4
+    container_name: arbiever-bs-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    env_file:
+      - ./frontend.env
+
+  proxy:
+    image: silverruler/arbiever-blockscout:latest
+    container_name: arbiever-bs-proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - "4005:80"
+
+volumes:
+  redis-data:
+  blockscout-db-data:
