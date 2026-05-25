@@ -1,94 +1,157 @@
 # ArbiEver Blockscout
 
-ArbiEver L2 (Chain ID `580511`) 전용 [Blockscout](https://github.com/blockscout/blockscout) 풀스택 익스플로러 배포 레포.
+[![CI Status](https://github.com/makewalletfirst/ArbiEver-BlockScout/actions/workflows/ci.yml/badge.svg)](https://github.com/makewalletfirst/ArbiEver-BlockScout/actions)
+[![Network: ArbiEver](https://img.shields.io/badge/Network-ArbiEver-blueviolet?style=flat-square)](https://arbiever.ever-chain.xyz)
+[![Chain ID: 580511](https://img.shields.io/badge/Chain_ID-580511-orange?style=flat-square)](https://arbiever.ever-chain.xyz)
+[![L2 Mode: AnyTrust](https://img.shields.io/badge/L2_Mode-AnyTrust-blue?style=flat-square)](https://arbiever.ever-chain.xyz)
 
-5컨테이너 미니멀 구성으로 4코어 12GB 환경에서 안정 가동.
+This repository hosts the deployment configurations and custom proxy definitions for **ArbiEver Blockscout**—a fully-customized, full-stack blockchain explorer dedicated specifically to the **ArbiEver L2** chain. 
 
-## 접속
+ArbiEver Blockscout is built upon a highly optimized fork of [Blockscout](https://github.com/blockscout/blockscout), packaged into a lightweight, 5-container minimal configuration tailored to run efficiently on infrastructure with 4 CPU cores and 12GB of RAM.
 
-- **외부**: https://arbiever.ever-chain.xyz
-- 로컬: http://localhost:4005
+---
 
-## 빠른 시작
+## 🌐 ArbiEver L2 Chain Context
 
+**ArbiEver** is a custom Layer 2 (L2) rollup built using the **Arbitrum Nitro AnyTrust** technology stack. It operates directly on top of the parent Layer 1 (L1) chain, **EtherEver**.
+
+### Core Chain Specifications
+
+| Specification | Layer 1 (Parent Chain) | Layer 2 (Rollup Chain) |
+| :--- | :--- | :--- |
+| **Name** | EtherEver | **ArbiEver** |
+| **Chain ID** | `58051` (0xe2c3) | **`580511`** (0x8dba7) |
+| **EVM Compatibility** | Pre-London (No `PUSH0` opcode support) | Custom Nitro execution (Shanghai compatible target) |
+| **Gas Model** | Legacy Gas Model (EIP-1559 Unsupported) | Optimistic custom gas target with Brotli L1 batch compression |
+| **Data Availability** | On-chain | **AnyTrust DAC Mode** (Single-member committee via `daserver`) |
+| **Public RPC** | `https://rpc-ether.ever-chain.xyz` | Connected locally to Sequencer RPC (`:8449`) |
+
+### Why AnyTrust & How It Links
+Instead of posting transaction raw data directly onto EtherEver L1 (which would be extremely gas-prohibitive given the L1's 30M gas limit and legacy gas model), ArbiEver utilizes the **AnyTrust** protocol. 
+1. **Data Availability Committee (DAC)**: The DAC server (`daserver`) stores transaction data off-chain and guarantees its availability.
+2. **Sequencer & Batch Poster**: The Sequencer processes transactions, and the Batch Poster compresses L2 batches (using Brotli) and posts lightweight data availability certificates (`keysets`) to the L1 `SequencerInbox`.
+3. **Validator / Staker**: Independent validators verify assertions and secure the chain, operating with a 7-day optimistic challenge period.
+
+---
+
+## 🎨 ArbiEver Custom Branded Fork
+
+ArbiEver Blockscout features a dedicated brand identity configured directly in the frontend and proxy configurations:
+- **Network Name**: `ArbiEver`
+- **Native Currency Symbol**: `ETE` (hard-pegged to parent chain EtherEver ETE)
+- **Visual Branding**: Integrated custom brand icon and favicon (`arbiicon512.png` built directly into `/static/arbiicon.png`).
+- **Default Theme**: Sleek Light Mode.
+- **Production Grade**: Testnet badge disabled.
+
+---
+
+## 🏗️ 5-Container Architecture
+
+To maintain high performance with a minimal memory footprint, resource-heavy features (like the visualizer, statistics aggregator, signature provider, and user-ops indexer) are disabled, concentrating memory on the core indexer and frontend engine.
+
+```
+                  ┌──────────────────────────────┐
+                  │   Cloudflare HTTPS Gateway   │
+                  │ (arbiever.ever-chain.xyz:443)│
+                  └──────────────┬───────────────┘
+                                 │ OCI VPN Tunnel
+                  ┌──────────────▼───────────────┐
+                  │        OCI stunnel           │
+                  │    (Forward to port 4005)    │
+                  └──────────────┬───────────────┘
+                                 │
+                 ┌───────────────▼───────────────┐
+                 │    arbiever-bs-proxy          │  (Nginx Proxy)
+                 │    (Serves /static/ & routes) │
+                 └──────┬─────────────────┬──────┘
+                        │ /api/           │ /
+                        │                 │
+     ┌──────────────────▼────────┐ ┌──────▼──────────────────┐
+     │ arbiever-bs-backend (4000)│ │arbiever-bs-frontend(3000)│
+     │  (Elixir Indexer & API)   │ │      (Next.js UI)       │
+     └──────────┬───────────┬────┘ └─────────────────────────┘
+                │           │
+     ┌──────────▼─────┐  ┌──▼────────────────────────┐
+     │arbiever-bs-redis│  │arbiever-bs-db (PostgreSQL)│
+     │ (Indexer Cache)│  │    (Chowned by db-init)   │
+     └────────────────┘  └───────────────────────────┘
+```
+
+| Container | Image | Description / Role |
+| :--- | :--- | :--- |
+| `arbiever-bs-redis` | `redis:alpine` | Key-value store for Elixir indexer caching. |
+| `arbiever-bs-db-init` | `postgres:17` | Standard initialization script container to securely set data folder permissions (`chown 2000:2000` for DB volume). |
+| `arbiever-bs-db` | `postgres:17` | High-performance relational database containing blockchain ledger state index. |
+| `arbiever-bs-backend` | `blockscout/blockscout:6.10.1` | Main Elixir indexer responsible for scraping block headers, executing release migrations, and running the HTTP API. |
+| `arbiever-bs-frontend` | `ghcr.io/blockscout/frontend:v1.36.4` | Next.js server delivering the responsive user interface. |
+| `arbiever-bs-proxy` | `silverruler/arbiever-blockscout:latest` | Custom Nginx server routing `/` to the frontend and `/api` to the backend. Serves custom assets like the ArbiEver icon. |
+
+---
+
+## ⚡ Quick Start & Deployment
+
+Follow the steps below to spawn the entire stack using Docker Compose.
+
+### Step 1: Initialize the Environment Config
+Create a secure `.env` file containing unique passwords and security keys:
 ```bash
-# 1. 시크릿 생성
 cat > .env <<EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 SECRET_KEY_BASE=$(openssl rand -hex 32)
 EOF
 chmod 600 .env
+```
 
-# 2. 가동 (재부팅 시 자동 복구 — restart: unless-stopped)
+### Step 2: Spin Up the Stack
+Run Docker Compose in detached mode. This loads all customized environment variables from `backend.env` and `frontend.env`:
+```bash
 docker compose --env-file .env up -d
+```
+*Note: Containers are configured with `restart: unless-stopped` to survive system reboots.*
 
-# 3. 확인
+### Step 3: Validate the Service
+Wait a few seconds for the migrations to complete, and verify that the backend API is successfully responding to queries:
+```bash
 curl http://localhost:4005/api/v2/stats
 ```
 
-`proxy` 서비스는 사전 빌드된 **`silverruler/arbiever-blockscout:latest`** (DockerHub) 이미지를 자동 pull. nginx + nginx.conf + arbiicon.png 가 임베디드됨.
+---
 
-## 5개 서비스
+## 🔌 L2 RPC Configuration
 
-| 컨테이너 | 이미지 | 역할 |
-|---|---|---|
-| `arbiever-bs-redis` | `redis:alpine` | 인덱서 캐시 |
-| `arbiever-bs-db-init` | `postgres:17` | DB 디렉토리 권한 초기화 (one-shot) |
-| `arbiever-bs-db` | `postgres:17` | 인덱서 DB |
-| `arbiever-bs-backend` | `blockscout/blockscout:6.10.1` | Elixir 인덱서 + API |
-| `arbiever-bs-frontend` | `ghcr.io/blockscout/frontend:v1.36.4` | Next.js UI |
-| `arbiever-bs-proxy` | **`silverruler/arbiever-blockscout:latest`** | nginx — :4005 + favicon 정적 서빙 |
-
-비활성 (메모리 절약): visualizer / stats / sig-provider / user-ops-indexer.
-
-## ArbiEver 브랜드 패치
-
-- 네트워크 이름: **ArbiEver**
-- 통화 단위: **ETE**
-- 로고 / favicon / 메뉴 아이콘: `arbiicon512.png` → `/static/arbiicon.png`
-- 기본 색상 테마: Light
-- testnet 배지: 없음
-
-핵심 환경변수 (`frontend.env`):
-```
-NEXT_PUBLIC_NETWORK_NAME=ArbiEver
-NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL=ETE
-NEXT_PUBLIC_NETWORK_LOGO=https://arbiever.ever-chain.xyz/static/arbiicon.png
-NEXT_PUBLIC_IS_TESTNET=false
-NEXT_PUBLIC_COLOR_THEME_DEFAULT=light
-```
-
-## L2 RPC 연결
-
-```
+The Blockscout backend connects directly to the local Arbitrum Nitro L2 RPC node via:
+```ini
 ETHEREUM_JSONRPC_HTTP_URL=http://host.docker.internal:8449/
 ```
+The Docker network references `host.docker.internal:host-gateway` to allow backend containers to communicate with the host operating system's Nitro RPC listener binded on `0.0.0.0:8449`.
 
-도커 컨테이너가 `host.docker.internal:host-gateway` 를 통해 호스트의 Nitro RPC (0.0.0.0:8449) 에 접근.
+---
 
-## 도메인 + 인프라
+## 🛠️ Local Proxy Image Build (Optional)
 
-- Cloudflare DNS: `arbiever.ever-chain.xyz` → OCI VPN 게이트웨이
-- OCI stunnel: `accept=4005`, `connect=10.8.0.14:4005`
-- 본 서버 (10.8.0.14): `proxy` 컨테이너 :4005 → backend(4000) + frontend(3000)
+If you wish to modify static assets or Nginx routing configurations, you can build the proxy image locally rather than pulling the pre-built image from Docker Hub.
 
-## 자체 빌드 (선택)
+1. **Build the image**:
+   ```bash
+   docker build -f Dockerfile.proxy -t arbiever-blockscout-proxy:local .
+   ```
+2. **Update docker-compose**:
+   Open `docker-compose.yml` and replace:
+   ```yaml
+   image: silverruler/arbiever-blockscout:latest
+   ```
+   with:
+   ```yaml
+   image: arbiever-blockscout-proxy:local
+   ```
+3. **Restart the proxy service**:
+   ```bash
+   docker compose --env-file .env up -d proxy
+   ```
 
-기본 사용은 DockerHub 의 pre-built proxy 이미지면 충분. 직접 빌드하려면:
+---
 
-```bash
-docker build -f Dockerfile.proxy -t arbiever-blockscout-proxy:local .
-# docker-compose.yml 의 proxy.image 를 arbiever-blockscout-proxy:local 로 변경
-```
+## 🔗 Related Repositories
 
-## 향후 확장
-
-- 컨트랙트 verify: Backend 가 이미 지원. Frontend의 verify 폼.
-- 토큰 페이지: ERC20 자동 인덱싱.
-- `stats` 컨테이너 활성화: tx/day, gas usage 등 정밀 차트.
-- 도메인 매핑 + HTTPS: 이미 Cloudflare 통해 적용됨.
-
-## 관련
-
-- ArbiEver L2 인프라: https://github.com/makewalletfirst/ArbiEver
-- 가벼운 Alethio Lite 익스플로러: https://github.com/makewalletfirst/ArbiEver-Explorer
+- **ArbiEver L2 Core Setup**: [makewalletfirst/ArbiEver](https://github.com/makewalletfirst/ArbiEver) — Scripts, configurations, and playbooks used to bootstrap the Nitro AnyTrust L2.
+- **ArbiEver Alethio Explorer**: [makewalletfirst/ArbiEver-Explorer](https://github.com/makewalletfirst/ArbiEver-Explorer) — A lightweight, client-side Alethio explorer used during Phase 8 bootstrap validation.
